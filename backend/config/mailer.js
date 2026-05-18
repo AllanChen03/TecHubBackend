@@ -1,26 +1,18 @@
-const nodemailer = require('nodemailer');
+const Brevo = require('@getbrevo/brevo');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL,
-    pass: process.env.EMAILPASSWORD
-  }
-});
+const client = Brevo.ApiClient.instance;
+client.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
 
-transporter.verify().then(() => {
-  console.log('✅ Listo para enviar correos');
-}).catch((error) => {
-  console.error('❌ Error configurando el correo:', error.message);
-});
+const apiInstance = new Brevo.TransactionalEmailsApi();
 
 const sendMail = async ({ to, subject, html }) => {
-  await transporter.sendMail({
-    from: `"Equipo TecHub" <${process.env.EMAIL}>`,
-    to,
-    subject,
-    html
-  });
+  const email = new Brevo.SendSmtpEmail();
+  email.to = [{ email: to }];
+  email.subject = subject;
+  email.htmlContent = html;
+  email.sender = { name: 'Equipo TecHub', email: 'SoporteTecHub@gmail.com' };
+
+  await apiInstance.sendTransacEmail(email);
 };
 
 module.exports = { sendMail };
