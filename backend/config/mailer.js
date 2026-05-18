@@ -1,16 +1,25 @@
-const { TransactionalEmailsApi, ApiClient, SendSmtpEmail } = require('@getbrevo/brevo');
-
-const apiInstance = new TransactionalEmailsApi();
-apiInstance.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-
 const sendMail = async ({ to, subject, html }) => {
-  const email = new SendSmtpEmail();
-  email.to = [{ email: to }];
-  email.subject = subject;
-  email.htmlContent = html;
-  email.sender = { name: 'Equipo TecHub', email: 'SoporteTecHub@gmail.com' };
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': process.env.BREVO_API_KEY
+    },
+    body: JSON.stringify({
+      sender: { name: 'Equipo TecHub', email: 'SoporteTecHub@gmail.com' },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html
+    })
+  });
 
-  await apiInstance.sendTransacEmail(email);
+  if (!response.ok) {
+    const error = await response.json();
+    console.error('❌ Error Brevo:', error);
+    throw new Error(error.message);
+  }
+
+  console.log('✅ Correo enviado a:', to);
 };
 
 module.exports = { sendMail };
