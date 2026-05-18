@@ -1,5 +1,14 @@
 const express = require('express');
 const cors = require('cors');
+
+process.on('uncaughtException', (err) => {
+  console.error('ERROR NO CAPTURADO:', err);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('PROMESA RECHAZADA:', err);
+});
+
 require('dotenv').config();
 require('./config/mailer');
 

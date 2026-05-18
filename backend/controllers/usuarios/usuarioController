@@ -3,7 +3,10 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { sendMail } = require('../../config/mailer');
 
+console.log('✅ usuarioController cargado');
+
 const login = async (req, res) => {
+  console.log('✅ Login llamado con:', req.body);
   const { email, password } = req.body;
 
   if (!email || !password) {
