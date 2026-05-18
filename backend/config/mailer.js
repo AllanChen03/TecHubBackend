@@ -7,7 +7,7 @@ const sendMail = async ({ to, subject, html }) => {
     },
     body: JSON.stringify({
       from: 'TecHub <onboarding@resend.dev>',
-      to,
+      to: 'allan031199@gmail.com', // ← tu email registrado en Resend
       subject,
       html
     })
@@ -21,7 +21,7 @@ const sendMail = async ({ to, subject, html }) => {
     throw new Error(data.message);
   }
 
-  console.log('✅ Correo enviado a:', to);
+  console.log('✅ Correo enviado');
 };
 
 module.exports = { sendMail };
