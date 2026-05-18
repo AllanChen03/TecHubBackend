@@ -7,7 +7,7 @@ const sendMail = async ({ to, subject, html }) => {
     },
     body: JSON.stringify({
       sender: { name: 'Equipo TecHub', email: 'SoporteTecHub@gmail.com' },
-      to: [{ email: to }],
+      to: [{ email: 'allan031199@estudiantec.com' }],
       subject,
       htmlContent: html
     })
