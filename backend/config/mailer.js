@@ -13,10 +13,12 @@ const sendMail = async ({ to, subject, html }) => {
     })
   });
 
+  const data = await response.json();
+  console.log('Respuesta Brevo:', JSON.stringify(data)); // ← agrega esto
+
   if (!response.ok) {
-    const error = await response.json();
-    console.error('❌ Error Brevo:', error);
-    throw new Error(error.message);
+    console.error('❌ Error Brevo:', data);
+    throw new Error(data.message);
   }
 
   console.log('✅ Correo enviado a:', to);
