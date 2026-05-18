@@ -1,26 +1,17 @@
-const nodemailer = require('nodemailer');
-require('dotenv').config();
+const { Resend } = require('resend');
 
-console.log('EMAIL:', process.env.EMAIL);         // ← agrega esto
-console.log('EMAILPASSWORD:', process.env.EMAILPASSWORD ? 'existe' : 'no existe'); // ← y esto
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,        // ← cambia 465 por 587
-  secure: false,    // ← cambia true por false
-  auth: {
-    user: process.env.EMAIL,
-    pass: process.env.EMAILPASSWORD
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
+const sendMail = async ({ to, subject, html }) => {
+  const { data, error } = await resend.emails.send({
+    from: 'TecHub <onboarding@resend.dev>',
+    to,
+    subject,
+    html
+  });
 
-transporter.verify().then(() => {
-  console.log('Listo para enviar correos de verificación');
-}).catch((error) => {
-  console.error('Error configurando el correo: ', error);
-});
+  if (error) throw new Error(error.message);
+  return data;
+};
 
-module.exports = transporter;
+module.exports = { sendMail };

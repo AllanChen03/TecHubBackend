@@ -1,7 +1,7 @@
 const db = require('../../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const transporter = require('../../config/mailer');
+const { sendMail } = require('../../config/mailer');
 
 const login = async (req, res) => {
   const { email, password } = req.body;
@@ -29,30 +29,27 @@ const login = async (req, res) => {
     }
 
     const passwordCorrecto = await bcrypt.compare(password, usuario.Password_hash);
-    
+
     if (!passwordCorrecto) {
       return res.status(401).json({ error: 'Contraseña incorrecta' });
     }
 
     const token = jwt.sign(
-      { 
-        id: usuario.UsuarioID, 
-        rol: usuario.RolID 
-      },
-      process.env.JWT_SECRET, 
-      { expiresIn: '2h' }    
+      { id: usuario.UsuarioID, rol: usuario.RolID },
+      process.env.JWT_SECRET,
+      { expiresIn: '2h' }
     );
 
-    res.json({ 
-      mensaje: 'Inicio de sesión exitoso', 
-      token: token,
+    res.json({
+      mensaje: 'Inicio de sesión exitoso',
+      token,
       user: {
         id: usuario.UsuarioID,
-        nombre: usuario.Nombre,       // Verifica que sea 'Nombre' con N mayúscula si así está en tu BD
-        apellidos: usuario.Apellidos, // Verifica que sea 'Apellidos'
+        nombre: usuario.Nombre,
+        apellidos: usuario.Apellidos,
         email: usuario.Email,
         telefono: usuario.Telefono,
-        rol: usuario.RolID            // 1 para admin, 2 para estudiante
+        rol: usuario.RolID
       }
     });
   });
@@ -63,29 +60,22 @@ const solicitarRecuperacion = (req, res) => {
 
   if (!email) return res.status(400).json({ error: 'Debes ingresar un correo' });
 
-  // 1. Buscamos si el usuario existe
   db.query('SELECT * FROM usuarios WHERE Email = ?', [email], (err, results) => {
     if (err || results.length === 0) {
-      // Por seguridad, a veces se dice "Si el correo existe, se envió el código" 
-      // pero para UX, le diremos si no lo encontramos.
       return res.status(404).json({ error: 'Este correo no está registrado en TecHub' });
     }
 
-    // 2. Generamos código y vencimiento (igual que en registro)
     const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
-    const codigoVencimiento = new Date(Date.now() + 3600000); // 1 hora
+    const codigoVencimiento = new Date(Date.now() + 3600000);
 
-    // 3. Guardamos el código en la BD
     db.query(
       'UPDATE usuarios SET codigoVerificacion = ?, codigoVencimiento = ? WHERE Email = ?',
       [codigoVerificacion, codigoVencimiento, email],
       async (errUpdate) => {
         if (errUpdate) return res.status(500).json({ error: 'Error interno al generar código' });
 
-        // 4. Enviamos el correo
         try {
-          const mailOptions = {
-            from: `"Equipo TecHub" <${process.env.EMAIL_USER}>`,
+          await sendMail({
             to: email,
             subject: 'Recuperación de Contraseña - TecHub',
             html: `
@@ -95,8 +85,7 @@ const solicitarRecuperacion = (req, res) => {
               <h1 style="color: #0056b3; letter-spacing: 5px;">${codigoVerificacion}</h1>
               <p>Si no solicitaste esto, puedes ignorar este correo.</p>
             `
-          };
-          await transporter.sendMail(mailOptions);
+          });
           res.json({ mensaje: 'Código de recuperación enviado a tu correo' });
         } catch (emailError) {
           console.error(emailError);
@@ -115,20 +104,18 @@ const restablecerContrasena = (req, res) => {
 
     const usuario = results[0];
 
-    // Validamos el código y el tiempo
     if (usuario.codigoVerificacion !== codigo) {
       return res.status(400).json({ error: 'El código de verificación es incorrecto' });
     }
+
     const ahora = new Date();
     if (ahora > new Date(usuario.codigoVencimiento)) {
       return res.status(400).json({ error: 'El código ha expirado. Solicita uno nuevo.' });
     }
 
-    // Encriptamos la nueva contraseña
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(nuevaPassword, saltRounds);
 
-    // Actualizamos la BD y limpiamos los códigos
     const sqlActualizar = `
       UPDATE usuarios 
       SET Password_hash = ?, codigoVerificacion = NULL, codigoVencimiento = NULL 
@@ -143,28 +130,23 @@ const restablecerContrasena = (req, res) => {
 };
 
 const editarContrasena = async (req, res) => {
-  const { id } = req.params; // El ID que viene en la URL
-  const { oldPassword, newPassword } = req.body; // Lo que manda el formulario
+  const { id } = req.params;
+  const { oldPassword, newPassword } = req.body;
 
   try {
-    // 1. Buscamos el hash de la contraseña actual
     db.query('SELECT Password_hash FROM usuarios WHERE UsuarioID = ?', [id], async (err, results) => {
       if (err || results.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
 
       const hashActual = results[0].Password_hash;
-
-      // 2. Comparamos la contraseña "vieja" que puso el usuario con la de la BD
       const coincide = await bcrypt.compare(oldPassword, hashActual);
-      
+
       if (!coincide) {
         return res.status(400).json({ error: 'La contraseña actual no es correcta' });
       }
 
-      // 3. Si coincide, encriptamos la nueva
       const saltRounds = 10;
       const nuevoHash = await bcrypt.hash(newPassword, saltRounds);
 
-      // 4. Actualizamos
       db.query('UPDATE usuarios SET Password_hash = ? WHERE UsuarioID = ?', [nuevoHash, id], (errUpdate) => {
         if (errUpdate) return res.status(500).json({ error: 'Error al guardar la nueva contraseña' });
         res.json({ mensaje: '¡Contraseña actualizada con éxito!' });
@@ -180,5 +162,4 @@ module.exports = {
   restablecerContrasena,
   solicitarRecuperacion,
   editarContrasena
-
 };
