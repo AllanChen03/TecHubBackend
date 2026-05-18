@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-require('./mailer');
+require('./config/mailer');
 
 const usuario = require('./routes/usuario');
 const admin = require('./routes/admin');
