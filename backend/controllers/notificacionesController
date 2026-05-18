@@ -1,0 +1,115 @@
+const db = require('../config/db');
+
+// ─────────────────────────────────────────────
+// HELPER COMPARTIDO: crear una notificacion
+// Exportado para que ordenController pueda usarlo
+// ─────────────────────────────────────────────
+const crearNotificacion = (usuarioID, titulo, mensaje, tipo, productoID = null, ordenID = null, remitenteID = null) => {
+  const sql = `
+    INSERT INTO notificaciones (UsuarioID, Titulo, Mensaje, Tipo, ProductoID, OrdenID, RemitenteID)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `;
+  db.query(sql, [usuarioID, titulo, mensaje, tipo, productoID, ordenID, remitenteID], (err) => {
+    if (err) console.error('Error al crear notificacion:', err);
+  });
+};
+
+// ─────────────────────────────────────────────
+// POST /usuarios/solicitar-compra/:productoID
+// ─────────────────────────────────────────────
+const solicitarCompra = (req, res) => {
+  const CompradorID = req.usuario.id;
+  const { productoID } = req.params;
+
+  const sqlProducto = `
+    SELECT p.ProductoID, p.NombreProducto, p.UsuarioID AS VendedorID,
+           p.DisponibilidadID,
+           u.Nombre AS CompradorNombre, u.Apellidos AS CompradorApellidos
+    FROM productos p
+    JOIN usuarios u ON u.UsuarioID = ?
+    WHERE p.ProductoID = ?
+  `;
+
+  db.query(sqlProducto, [CompradorID, productoID], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Error al buscar el producto' });
+    if (results.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
+
+    const producto = results[0];
+
+    if (producto.DisponibilidadID !== 1) {
+      return res.status(400).json({ error: 'Este producto ya no está disponible' });
+    }
+
+    if (producto.VendedorID === CompradorID) {
+      return res.status(400).json({ error: 'No puedes comprar tu propio producto' });
+    }
+
+    const nombreComprador = `${producto.CompradorNombre} ${producto.CompradorApellidos}`;
+    crearNotificacion(
+      producto.VendedorID,
+      `${nombreComprador} quiere comprarte "${producto.NombreProducto}"`,
+      `Ingresa a tus notificaciones para aceptar o rechazar la solicitud.`,
+      'solicitud_compra',
+      producto.ProductoID,
+      null,
+      CompradorID
+    );
+
+    res.json({ mensaje: 'Solicitud enviada al vendedor' });
+  });
+};
+
+// ─────────────────────────────────────────────
+// GET /usuarios/notificaciones
+// ─────────────────────────────────────────────
+const obtenerNotificaciones = (req, res) => {
+  const UsuarioID = req.usuario.id;
+
+  const sql = `
+    SELECT 
+      n.NotificacionID,
+      n.UsuarioID,
+      n.Titulo,
+      n.Mensaje,
+      n.Tipo,
+      n.ProductoID,
+      n.OrdenID,
+      n.RemitenteID,
+      DATE_FORMAT(n.FechaCreacion - INTERVAL 6 HOUR, '%Y-%m-%dT%H:%i:%s') AS FechaCreacion,
+      p.NombreProducto,
+      p.ImagenPath
+    FROM notificaciones n
+    LEFT JOIN productos p ON p.ProductoID = n.ProductoID
+    WHERE n.UsuarioID = ?
+    ORDER BY n.FechaCreacion DESC
+  `;
+
+  db.query(sql, [UsuarioID], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Error al obtener notificaciones' });
+    res.json(results);
+  });
+};
+
+// ─────────────────────────────────────────────
+// DELETE /usuarios/notificaciones/:id
+// ─────────────────────────────────────────────
+const eliminarNotificacion = (req, res) => {
+  const { id } = req.params;
+  const UsuarioID = req.usuario.id;
+
+  db.query(
+    'DELETE FROM notificaciones WHERE NotificacionID = ? AND UsuarioID = ?',
+    [id, UsuarioID],
+    (err) => {
+      if (err) return res.status(500).json({ error: 'Error al eliminar notificacion' });
+      res.json({ mensaje: 'Notificacion eliminada' });
+    }
+  );
+};
+
+module.exports = {
+  crearNotificacion,   // exportado para ordenController
+  solicitarCompra,
+  obtenerNotificaciones,
+  eliminarNotificacion,
+};

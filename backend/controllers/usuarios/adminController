@@ -1,0 +1,203 @@
+const db = require('../../config/db');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken'); 
+const transporter = require('../../config/mailer');
+
+const loginAdmin = async (req, res) => {
+  const { email, password } = req.body;
+
+  // 1. Validar que vengan los datos
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Por favor ingrese email y contraseña' });
+  }
+
+  // 2. Buscar por email y asegurar que el RolID sea 1 (Administrador)
+  const sql = 'SELECT * FROM usuarios WHERE Email = ? AND RolID = 1';
+
+  db.query(sql, [email], async (err, results) => {
+    if (err) {
+      console.error('Error buscando administrador:', err);
+      return res.status(500).json({ error: 'Error interno del servidor' });
+    }
+
+    // Si no hay resultados, el correo no existe O el usuario existe pero NO es administrador
+    if (results.length === 0) {
+      return res.status(401).json({ error: 'Credenciales inválidas o no tienes permisos de administrador' });
+    }
+
+    const admin = results[0];
+
+    try {
+      // 3. Comparar la contraseña ingresada con el hash
+      const passwordValida = await bcrypt.compare(password, admin.Password_hash);
+
+      if (!passwordValida) {
+        return res.status(401).json({ error: 'Credenciales inválidas' });
+      }
+
+      // 4. Generamos el JWT para el Administrador
+      const payload = {
+        usuarioID: admin.UsuarioID,
+        rolID: admin.RolID // 👈 Aquí lo estás guardando como 'rolID' en minúscula
+      };
+
+      const token = jwt.sign(payload, process.env.JWT_SECRET, {
+        expiresIn: '4h' // A los admins les podemos dar una sesión más larga si queremos (ej. 4 horas)
+      });
+
+      // 5. Enviamos la respuesta exitosa
+      res.json({
+        mensaje: 'Inicio de sesión de Administrador exitoso',
+        token: token,
+        admin: {
+          id: admin.UsuarioID,
+          nombre: admin.Nombre,
+          apellidos: admin.Apellidos,
+          rolID: admin.RolID
+        }
+      });
+
+    } catch (error) {
+      console.error('Error al verificar la contraseña:', error);
+      res.status(500).json({ error: 'Error interno al procesar el login' });
+    }
+  });
+};
+
+const obtenerUsuarios = async(req, res) => {
+  const sql = 'SELECT * FROM usuarios';
+
+  db.query(sql, (err, result) => {
+    if (err) {
+      console.error('Error consultando usuarios:', err);
+      return res.status(500).json({
+        error: 'Error consultando usuarios',
+        detalle: err.message
+      });
+    }
+
+    res.json(result);
+  });
+};
+
+const crearUsuario = async (req, res) => {
+  const { nombre, apellidos, email, password, rolID } = req.body;
+
+  // 1. Validar que no falten datos
+  if (!nombre || !apellidos || !email || !password || !rolID) {
+    return res.status(400).json({ error: 'Faltan datos obligatorios' });
+  }
+
+  // 2. Validar que el correo sea institucional
+  if (!email.endsWith('@estudiantec.cr')) {
+    return res.status(400).json({ error: 'Solo se permiten correos institucionales (@estudiantec.cr)' });
+  }
+
+  try {
+    // 3. Encriptar la contraseña
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    // 4. Generar código de verificación de 6 dígitos
+    const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // 5. Configurar el vencimiento (por ejemplo, 1 hora = 3600000 milisegundos)
+    // El driver de mysql2 entiende las fechas de JavaScript
+    const codigoVencimiento = new Date(Date.now() + 3600000); 
+
+    // 6. Insertar en la base de datos con Verificacion = false
+    const sql = `
+      INSERT INTO usuarios
+      (Nombre, Apellidos, Email, Password_hash, RolID, verificado, codigoVerificacion, codigoVencimiento)
+      VALUES (?, ?, ?, ?, ?, false, ?, ?)
+    `;
+
+    db.query(
+      sql,
+      [nombre, apellidos, email, passwordHash, rolID, codigoVerificacion, codigoVencimiento],
+      async (err, result) => {
+        if (err) {
+          console.error('Error insertando usuario:', err);
+          return res.status(500).json({ error: 'Error al registrar el usuario en la base de datos' });
+        }
+
+        // 7. Si se guardó en la BD, enviamos el correo electrónico
+        try {
+          const mailOptions = {
+            from: `"Equipo TecHub" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Verifica tu cuenta en TecHub',
+            html: `
+              <h2>¡Hola, ${nombre}! Bienvenido a TecHub.</h2>
+              <p>Para activar tu cuenta, por favor ingresa el siguiente código de seguridad de 6 dígitos:</p>
+              <h1 style="color: #0056b3; letter-spacing: 5px;">${codigoVerificacion}</h1>
+              <p>Este código vencerá en 1 hora.</p>
+            `
+          };
+
+          await transporter.sendMail(mailOptions);
+
+          res.status(201).json({
+            mensaje: 'Usuario registrado. Por favor, revisa tu correo institucional para verificar tu cuenta.',
+            usuarioID: result.insertId
+          });
+
+        } catch (emailError) {
+          console.error('Error enviando el correo:', emailError);
+          res.status(500).json({ error: 'Usuario creado, pero hubo un error al enviar el correo de verificación' });
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error interno:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+};
+
+const actualizarUsuario = (req, res) => {
+  const { id } = req.params; 
+  const { nombre, apellidos, email, rolID } = req.body;
+
+  const sql = 'UPDATE usuarios SET Nombre = ?, Apellidos = ?, Email = ?, RolID = ? WHERE UsuarioID = ?';
+  
+  db.query(sql, [nombre, apellidos, email, rolID, id], (err, result) => {
+    if (err) {
+      console.error('Error al actualizar usuario:', err);
+      return res.status(500).json({ error: 'Error interno al actualizar el usuario' });
+    }
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    res.json({ mensaje: 'Usuario actualizado correctamente' });
+  });
+};
+
+const eliminarUsuario = (req, res) => {
+  const { id } = req.params;
+
+  const sql = 'DELETE FROM usuarios WHERE UsuarioID = ?';
+  
+  db.query(sql, [id], (err, result) => {
+    if (err) {
+      console.error('Error al eliminar usuario:', err);
+      return res.status(500).json({ error: 'Error al eliminar el usuario.' });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    res.json({ mensaje: 'Usuario eliminado correctamente' });
+  });
+};
+
+module.exports = {
+  obtenerUsuarios,
+  crearUsuario,
+  loginAdmin,
+  actualizarUsuario,
+  eliminarUsuario
+
+};

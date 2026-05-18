@@ -1,0 +1,241 @@
+const db = require('../../config/db');
+const bcrypt = require('bcrypt');
+const transporter = require('../../config/mailer');
+
+const crearUsuario = async (req, res) => {
+  // 👇 1. Agregamos el telefono aquí
+  const { nombre, apellidos, email, password, rolID, telefono } = req.body;
+
+  // 👇 2. Validamos que el telefono no venga vacío
+  if (!nombre || !apellidos || !email || !password || !rolID || !telefono) {
+    return res.status(400).json({ error: 'Faltan datos obligatorios, incluyendo el teléfono' });
+  }
+
+  // 3. Validar que el correo sea institucional
+  if (!email.endsWith('@estudiantec.cr')) {
+    return res.status(400).json({ error: 'Solo se permiten correos institucionales (@estudiantec.cr)' });
+  }
+
+  try {
+    // 4. Encriptar la contraseña
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    // 5. Generar código de verificación de 6 dígitos
+    const codigoVerificacion = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // 6. Configurar el vencimiento (15 minutos = 900000 milisegundos)
+    const codigoVencimiento = new Date(Date.now() + 900000); 
+
+    // 👇 7. Insertamos el Telefono en la base de datos
+    const sql = `
+      INSERT INTO usuarios
+      (Nombre, Apellidos, Email, Password_hash, Telefono, RolID, verificado, codigoVerificacion, codigoVencimiento)
+      VALUES (?, ?, ?, ?, ?, ?, false, ?, ?)
+    `;
+
+    db.query(
+      sql,
+      // 👇 Agregamos la variable 'telefono' en el orden correcto
+      [nombre, apellidos, email, passwordHash, telefono, rolID, codigoVerificacion, codigoVencimiento],
+      async (err, result) => {
+        if (err) {
+          console.error('Error insertando usuario:', err);
+          // Opcional: Manejo de correo duplicado
+          if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ error: 'Este correo ya está registrado' });
+          }
+          return res.status(500).json({ error: 'Error al registrar el usuario en la base de datos' });
+        }
+
+        try {
+          const mailOptions = {
+            from: `"Equipo TecHub" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Verifica tu cuenta en TecHub',
+            html: `
+              <h2>¡Hola, ${nombre}! Bienvenido a TecHub.</h2>
+              <p>Para activar tu cuenta, por favor ingresa el siguiente código de seguridad de 6 dígitos:</p>
+              <h1 style="color: #0056b3; letter-spacing: 5px;">${codigoVerificacion}</h1>
+              <p>Este código vencerá en 15 minutos.</p> 
+            `
+          };
+
+          await transporter.sendMail(mailOptions);
+
+          res.status(201).json({
+            mensaje: 'Usuario registrado. Por favor, revisa tu correo institucional para verificar tu cuenta.',
+            usuarioID: result.insertId
+          });
+
+        } catch (emailError) {
+          console.error('Error enviando el correo:', emailError);
+          res.status(500).json({ error: 'Usuario creado, pero hubo un error al enviar el correo de verificación' });
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error interno:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+};
+
+const editarUsuario = async (req, res) => {
+  const { id } = req.params;
+  // Extraemos datos sin importar si el front manda 'nombre' o 'Nombre'
+  const nombre = req.body.nombre || req.body.Nombre;
+  const apellidos = req.body.apellidos || req.body.Apellidos;
+  const email = req.body.email || req.body.Email;
+  const telefono = req.body.telefono || req.body.Telefono;
+
+  // LOG PARA DEPURAR (Mira tu terminal negra)
+  console.log(">>> PETICIÓN DE EDICIÓN RECIBIDA");
+  console.log("ID:", id, "Datos:", { nombre, apellidos, email, telefono });
+
+  const sql = `UPDATE usuarios SET Nombre = ?, Apellidos = ?, Email = ?, Telefono = ? WHERE UsuarioID = ?`;
+
+  db.query(sql, [nombre, apellidos, email, telefono, id], (err, result) => {
+    if (err) {
+      console.error("❌ ERROR MYSQL:", err.sqlMessage);
+      return res.status(500).json({ error: err.sqlMessage });
+    }
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Usuario no encontrado con ID: " + id });
+    }
+
+    res.status(200).json({ mensaje: "Perfil actualizado" });
+  });
+};
+
+const verificarCuenta = (req, res) => {
+  const { email, codigo } = req.body;
+
+  if (!email || !codigo) {
+    return res.status(400).json({ error: 'Se requiere el correo y el código de verificación' });
+  }
+
+  // 1. Buscamos al usuario por su email
+  const sqlBuscar = 'SELECT * FROM usuarios WHERE Email = ?';
+
+  db.query(sqlBuscar, [email], (err, results) => {
+    if (err || results.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const usuario = results[0];
+
+    // 2. Verificar si ya está activa
+    // Dependiendo de cómo lea MySQL los booleanos, puede ser 1 o true
+    if (usuario.verificado === 1 || usuario.verificado === true) {
+      return res.status(400).json({ error: 'Esta cuenta ya se encuentra verificada' });
+    }
+
+    // 3. Comprobar si el código coincide
+    if (usuario.codigoVerificacion !== codigo) {
+      return res.status(400).json({ error: 'Código de verificación incorrecto' });
+    }
+
+    // 4. Comprobar si el código no ha vencido
+    const ahora = new Date();
+    if (ahora > new Date(usuario.codigoVencimiento)) {
+      return res.status(400).json({ error: 'El código ha expirado. Debes solicitar uno nuevo.' });
+    }
+
+    // 5. Si todo es correcto, actualizamos la tabla para activar al usuario
+    const sqlActualizar = `
+      UPDATE usuarios 
+      SET verificado = true, codigoVerificacion = NULL, codigoVencimiento = NULL 
+      WHERE Email = ?
+    `;
+
+    db.query(sqlActualizar, [email], (errUpdate, resultUpdate) => {
+      if (errUpdate) {
+        console.error('Error al actualizar verificación:', errUpdate);
+        return res.status(500).json({ error: 'Error al activar la cuenta' });
+      }
+
+      res.json({ mensaje: '¡Cuenta verificada con éxito! Ya puedes iniciar sesión.' });
+    });
+  });
+};
+
+const reenviarCodigoRegistro = (req, res) => {
+  const { email } = req.body;
+
+  if (!email) return res.status(400).json({ error: 'Email requerido' });
+
+  // 1. Verificamos que el usuario exista y NO esté verificado aún
+  db.query('SELECT * FROM usuarios WHERE Email = ?', [email], (err, results) => {
+    if (err || results.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const usuario = results[0];
+    if (usuario.verificado) return res.status(400).json({ error: 'Esta cuenta ya está activa' });
+
+    // 2. Generamos nuevo código (6 dígitos) y nueva expiración (1 hora)
+    const nuevoCodigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const nuevaExpiracion = new Date(Date.now() + 900000);
+
+    // 3. Actualizamos la BD
+    db.query(
+      'UPDATE usuarios SET codigoVerificacion = ?, codigoVencimiento = ? WHERE Email = ?',
+      [nuevoCodigo, nuevaExpiracion, email],
+      async (errUpdate) => {
+        if (errUpdate) return res.status(500).json({ error: 'Error al generar nuevo código' });
+
+        // 4. Enviamos el nuevo correo
+        try {
+          await transporter.sendMail({
+            from: `"Equipo TecHub" <${process.env.EMAIL_USER}>`,
+            to: email,
+            subject: 'Tu nuevo código de verificación - TecHub',
+            html: `<p>Hola, aquí tienes tu nuevo código: <b>${nuevoCodigo}</b>. Vence en 1 hora.</p>`
+          });
+          res.json({ mensaje: 'Se ha enviado un nuevo código a tu correo.' });
+        } catch (mailErr) {
+          res.status(500).json({ error: 'Error al enviar el correo' });
+        }
+      }
+    );
+  });
+};
+
+const eliminarUsuario = async (req, res) => {
+  const { id } = req.params;
+
+  console.log(`>>> PETICIÓN PARA ELIMINAR USUARIO ID: ${id}`);
+
+  // Consulta SQL para eliminar al usuario
+  const sql = 'DELETE FROM usuarios WHERE UsuarioID = ?';
+
+  db.query(sql, [id], (err, result) => {
+    if (err) {
+      console.error('❌ ERROR MYSQL AL ELIMINAR:', err.sqlMessage);
+      
+      // Si el usuario tiene productos u órdenes, MySQL podría bloquear el borrado por seguridad.
+      if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+        return res.status(400).json({ error: 'No puedes eliminar tu cuenta porque tienes productos u órdenes activas.' });
+      }
+
+      return res.status(500).json({ error: 'Error interno de la base de datos' });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    console.log("✅ Cuenta eliminada exitosamente de la BD");
+    res.status(200).json({ mensaje: 'Cuenta eliminada exitosamente' });
+  });
+};
+
+
+
+// --- EXPORTAR TODAS LAS FUNCIONES ---
+module.exports = {
+  crearUsuario,
+  editarUsuario,
+  verificarCuenta,
+  reenviarCodigoRegistro,
+  eliminarUsuario
+};
