@@ -1,23 +1,23 @@
 const sendMail = async ({ to, subject, html }) => {
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+  const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'api-key': process.env.BREVO_API_KEY
+      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
     },
     body: JSON.stringify({
-      sender: { name: 'Equipo TecHub', email: 'SoporteTecHub@gmail.com' },
-      to: [{ email: 'allan031199@estudiantec.com' }],
+      from: 'TecHub <onboarding@resend.dev>',
+      to,
       subject,
-      htmlContent: html
+      html
     })
   });
 
   const data = await response.json();
-  console.log('Respuesta Brevo:', JSON.stringify(data)); // ← agrega esto
+  console.log('Respuesta Resend:', JSON.stringify(data));
 
   if (!response.ok) {
-    console.error('❌ Error Brevo:', data);
+    console.error('❌ Error Resend:', data);
     throw new Error(data.message);
   }
 
