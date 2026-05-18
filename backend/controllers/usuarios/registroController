@@ -56,9 +56,9 @@ const crearUsuario = async (req, res) => {
           });
 
         } catch (emailError) {
-          console.error('Error enviando el correo:', emailError);
-          res.status(500).json({ error: 'Usuario creado, pero hubo un error al enviar el correo de verificación' });
-        }
+            console.error('❌ Error enviando correo:', emailError.message); // ← cambia esto
+            res.status(500).json({ error: 'Usuario creado, pero hubo un error al enviar el correo de verificación' });
+          }
       }
     );
   } catch (error) {
